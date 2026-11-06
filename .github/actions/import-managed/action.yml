@@ -1,0 +1,57 @@
+name: Import managed solution
+description: Import one already-built managed solution and publish customizations.
+inputs:
+  environment-url:
+    description: Dataverse URL for TEST or PROD
+    required: true
+  app-id:
+    description: Deploy app registration client ID
+    required: true
+  tenant-id:
+    description: Entra tenant ID
+    required: true
+  solution-file:
+    description: Path to the managed solution zip built earlier in the pipeline
+    required: true
+  stage-and-upgrade:
+    description: true when this managed solution is already installed
+    required: true
+  deployment-settings-file:
+    description: Optional deployment settings file for connection references and environment variables
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Import managed solution
+      if: inputs.deployment-settings-file == ''
+      uses: microsoft/powerplatform-actions/import-solution@v1
+      with:
+        environment-url: ${{ inputs.environment-url }}
+        app-id: ${{ inputs.app-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        solution-file: ${{ inputs.solution-file }}
+        publish-changes: true
+        force-overwrite: true
+        activate-plugins: true
+        run-asynchronously: true
+        max-async-wait-time: 120
+        stage-and-upgrade: ${{ inputs.stage-and-upgrade }}
+        use-deployment-settings-file: false
+
+    - name: Import managed solution with deployment settings
+      if: inputs.deployment-settings-file != ''
+      uses: microsoft/powerplatform-actions/import-solution@v1
+      with:
+        environment-url: ${{ inputs.environment-url }}
+        app-id: ${{ inputs.app-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        solution-file: ${{ inputs.solution-file }}
+        publish-changes: true
+        force-overwrite: true
+        activate-plugins: true
+        run-asynchronously: true
+        max-async-wait-time: 120
+        stage-and-upgrade: ${{ inputs.stage-and-upgrade }}
+        use-deployment-settings-file: true
+        deployment-settings-file: ${{ inputs.deployment-settings-file }}

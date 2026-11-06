@@ -1,0 +1,12 @@
+{
+  "comment": "One entry per application. Source lives in solutions/<uniqueName>. Export-Solution.ps1 sets enabled to true after a real unpack from L48 DEV. Disabled entries are not deployed.",
+  "solutions": [
+    {
+      "uniqueName": "SamplePipelineApp",
+      "displayName": "Sample Pipeline App",
+      "owner": "unassigned",
+      "enabled": false,
+      "processCanvasApps": false
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "EnvironmentVariables": [
+    {
+      "SchemaName": "l48_SamplePipelineApp_ApiUrl",
+      "Value": "https://api.contoso.test"
+    }
+  ],
+  "ConnectionReferences": [
+    {
+      "LogicalName": "l48_sharedsharepointonline_sample",
+      "ConnectionId": "00000000-0000-0000-0000-000000000000",
+      "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+    }
+  ]
+}

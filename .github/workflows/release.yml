@@ -1,0 +1,362 @@
+# Diagram steps 5 through 8.
+# Merge to main packs each changed solution once.
+# TEST runs solution checker, then imports that zip.
+# PROD waits for the environment approval button and imports the same zip.
+# The release tag is created only after PROD succeeds.
+
+name: Build and promote
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "solutions/**"
+      - "config/**"
+      - "catalog/**"
+      - "scripts/ci/**"
+      - ".github/workflows/release.yml"
+      - ".github/actions/**"
+  workflow_dispatch:
+    inputs:
+      solution_name:
+        description: Solution unique name, or all enabled solutions
+        required: true
+        default: all
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect changed solutions
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      has_solutions: ${{ steps.detect.outputs.has_solutions }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select solutions to promote
+        id: detect
+        env:
+          SOLUTION_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.solution_name || '' }}
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/detect_solutions.py
+
+  nothing-to-promote:
+    name: Nothing to promote
+    needs: detect
+    if: needs.detect.outputs.has_solutions != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record the skip
+        run: echo "No enabled solution changes on this commit."
+
+  build:
+    name: Pack managed solution
+    needs: detect
+    if: needs.detect.outputs.has_solutions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJson(needs.detect.outputs.matrix || '{"include":[]}') }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+
+      - name: Validate unpacked solution
+        env:
+          SOLUTION_NAME: ${{ matrix.uniqueName }}
+        run: python3 scripts/ci/validate_solution.py
+
+      - name: Create artifact directory
+        run: mkdir -p out
+
+      - name: Pack managed solution
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-folder: solutions/${{ matrix.uniqueName }}
+          solution-file: out/${{ matrix.uniqueName }}_managed.zip
+          solution-type: Managed
+          process-canvas-apps: ${{ matrix.processCanvasApps }}
+          use-unmanaged-file-for-missing-managed: true
+
+      - name: Write release manifest
+        env:
+          SOLUTION_NAME: ${{ matrix.uniqueName }}
+          SOLUTION_VERSION: ${{ matrix.version }}
+          SOLUTION_DISPLAY_NAME: ${{ matrix.displayName }}
+        run: python3 scripts/ci/write_manifest.py
+
+      - name: Upload managed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-${{ matrix.uniqueName }}
+          path: out/
+          retention-days: 90
+          if-no-files-found: error
+
+  deploy-test:
+    name: Deploy TEST
+    needs: [detect, build]
+    if: needs.detect.outputs.has_solutions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: test
+    concurrency:
+      group: deploy-test-${{ matrix.uniqueName }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.detect.outputs.matrix || '{"include":[]}') }}
+    steps:
+      - name: Require TEST configuration
+        env:
+          PP_ENVIRONMENT_URL: ${{ vars.PP_ENVIRONMENT_URL }}
+          PP_TENANT_ID: ${{ vars.PP_TENANT_ID }}
+          PP_APP_ID: ${{ vars.PP_APP_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$PP_ENVIRONMENT_URL"
+          test -n "$PP_TENANT_ID"
+          test -n "$PP_APP_ID"
+          case "$PP_ENVIRONMENT_URL" in
+            https://*) ;;
+            *) echo "PP_ENVIRONMENT_URL on the test environment must be the TEST Dataverse URL."; exit 1 ;;
+          esac
+          case "$PP_ENVIRONMENT_URL" in
+            */) echo "Remove the trailing slash from PP_ENVIRONMENT_URL."; exit 1 ;;
+          esac
+
+      - name: Check out deployment settings
+        uses: actions/checkout@v4
+
+      - name: Download managed artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: managed-${{ matrix.uniqueName }}
+          path: out
+
+      - name: Install Power Platform CLI
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Verify TEST federated identity
+        uses: microsoft/powerplatform-actions/who-am-i@v1
+        with:
+          environment-url: ${{ vars.PP_ENVIRONMENT_URL }}
+          app-id: ${{ vars.PP_APP_ID }}
+          tenant-id: ${{ vars.PP_TENANT_ID }}
+
+      - name: Run solution checker before import
+        uses: microsoft/powerplatform-actions/check-solution@v1
+        with:
+          environment-url: ${{ vars.PP_ENVIRONMENT_URL }}
+          app-id: ${{ vars.PP_APP_ID }}
+          tenant-id: ${{ vars.PP_TENANT_ID }}
+          path: out/${{ matrix.uniqueName }}_managed.zip
+          geo: ${{ vars.PP_CHECKER_GEO || 'UnitedStates' }}
+          checker-logs-artifact-name: CheckSolutionLogs-${{ matrix.uniqueName }}
+          fail-on-analysis-error: true
+
+      - name: Authenticate PAC
+        shell: bash
+        env:
+          PP_ENVIRONMENT_URL: ${{ vars.PP_ENVIRONMENT_URL }}
+          PP_TENANT_ID: ${{ vars.PP_TENANT_ID }}
+          PP_APP_ID: ${{ vars.PP_APP_ID }}
+        run: |
+          set -euo pipefail
+          if pac auth select --name pipeline; then
+            exit 0
+          fi
+          pac auth create \
+            --name pipeline \
+            --environment "$PP_ENVIRONMENT_URL" \
+            --tenant "$PP_TENANT_ID" \
+            --applicationId "$PP_APP_ID" \
+            --githubFederated
+
+      - name: Choose first import or upgrade
+        id: mode
+        env:
+          SOLUTION_NAME: ${{ matrix.uniqueName }}
+        run: python3 scripts/ci/import_mode.py
+
+      - name: Import managed solution into TEST and publish
+        uses: ./.github/actions/import-managed
+        with:
+          environment-url: ${{ vars.PP_ENVIRONMENT_URL }}
+          app-id: ${{ vars.PP_APP_ID }}
+          tenant-id: ${{ vars.PP_TENANT_ID }}
+          solution-file: out/${{ matrix.uniqueName }}_managed.zip
+          stage-and-upgrade: ${{ steps.mode.outputs.stage_and_upgrade }}
+          deployment-settings-file: ${{ matrix.hasTestSettings && format('config/{0}/test.settings.json', matrix.uniqueName) || '' }}
+
+      - name: Sign in again for the smoke test
+        shell: bash
+        env:
+          PP_ENVIRONMENT_URL: ${{ vars.PP_ENVIRONMENT_URL }}
+          PP_TENANT_ID: ${{ vars.PP_TENANT_ID }}
+          PP_APP_ID: ${{ vars.PP_APP_ID }}
+        run: |
+          set -euo pipefail
+          if pac auth select --name pipeline; then
+            exit 0
+          fi
+          pac auth create \
+            --name pipeline \
+            --environment "$PP_ENVIRONMENT_URL" \
+            --tenant "$PP_TENANT_ID" \
+            --applicationId "$PP_APP_ID" \
+            --githubFederated
+
+      - name: Smoke test
+        run: python3 scripts/ci/smoke_test.py
+
+  deploy-prod:
+    name: Deploy PROD
+    needs: [detect, deploy-test]
+    if: needs.detect.outputs.has_solutions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: production
+    concurrency:
+      group: deploy-prod-${{ matrix.uniqueName }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.detect.outputs.matrix || '{"include":[]}') }}
+    steps:
+      - name: Require PROD configuration
+        env:
+          PP_ENVIRONMENT_URL: ${{ vars.PP_ENVIRONMENT_URL }}
+          PP_TENANT_ID: ${{ vars.PP_TENANT_ID }}
+          PP_APP_ID: ${{ vars.PP_APP_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$PP_ENVIRONMENT_URL"
+          test -n "$PP_TENANT_ID"
+          test -n "$PP_APP_ID"
+          case "$PP_ENVIRONMENT_URL" in
+            https://*) ;;
+            *) echo "PP_ENVIRONMENT_URL on the production environment must be the PROD Dataverse URL."; exit 1 ;;
+          esac
+          case "$PP_ENVIRONMENT_URL" in
+            */) echo "Remove the trailing slash from PP_ENVIRONMENT_URL."; exit 1 ;;
+          esac
+
+      - name: Check out deployment settings
+        uses: actions/checkout@v4
+
+      - name: Download the TEST artifact without packing again
+        uses: actions/download-artifact@v4
+        with:
+          name: managed-${{ matrix.uniqueName }}
+          path: out
+
+      - name: Install Power Platform CLI
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Verify PROD federated identity
+        uses: microsoft/powerplatform-actions/who-am-i@v1
+        with:
+          environment-url: ${{ vars.PP_ENVIRONMENT_URL }}
+          app-id: ${{ vars.PP_APP_ID }}
+          tenant-id: ${{ vars.PP_TENANT_ID }}
+
+      - name: Authenticate PAC
+        shell: bash
+        env:
+          PP_ENVIRONMENT_URL: ${{ vars.PP_ENVIRONMENT_URL }}
+          PP_TENANT_ID: ${{ vars.PP_TENANT_ID }}
+          PP_APP_ID: ${{ vars.PP_APP_ID }}
+        run: |
+          set -euo pipefail
+          if pac auth select --name pipeline; then
+            exit 0
+          fi
+          pac auth create \
+            --name pipeline \
+            --environment "$PP_ENVIRONMENT_URL" \
+            --tenant "$PP_TENANT_ID" \
+            --applicationId "$PP_APP_ID" \
+            --githubFederated
+
+      - name: Choose first import or upgrade
+        id: mode
+        env:
+          SOLUTION_NAME: ${{ matrix.uniqueName }}
+        run: python3 scripts/ci/import_mode.py
+
+      - name: Import the same managed solution into PROD and publish
+        uses: ./.github/actions/import-managed
+        with:
+          environment-url: ${{ vars.PP_ENVIRONMENT_URL }}
+          app-id: ${{ vars.PP_APP_ID }}
+          tenant-id: ${{ vars.PP_TENANT_ID }}
+          solution-file: out/${{ matrix.uniqueName }}_managed.zip
+          stage-and-upgrade: ${{ steps.mode.outputs.stage_and_upgrade }}
+          deployment-settings-file: ${{ matrix.hasProdSettings && format('config/{0}/prod.settings.json', matrix.uniqueName) || '' }}
+
+      - name: Sign in again for the smoke test
+        shell: bash
+        env:
+          PP_ENVIRONMENT_URL: ${{ vars.PP_ENVIRONMENT_URL }}
+          PP_TENANT_ID: ${{ vars.PP_TENANT_ID }}
+          PP_APP_ID: ${{ vars.PP_APP_ID }}
+        run: |
+          set -euo pipefail
+          if pac auth select --name pipeline; then
+            exit 0
+          fi
+          pac auth create \
+            --name pipeline \
+            --environment "$PP_ENVIRONMENT_URL" \
+            --tenant "$PP_TENANT_ID" \
+            --applicationId "$PP_APP_ID" \
+            --githubFederated
+
+      - name: Smoke test
+        run: python3 scripts/ci/smoke_test.py
+
+  tag:
+    name: Tag PROD release
+    needs: [detect, deploy-prod]
+    if: needs.detect.outputs.has_solutions == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJson(needs.detect.outputs.matrix || '{"include":[]}') }}
+    steps:
+      - name: Check out the promoted commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Download the promoted artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: managed-${{ matrix.uniqueName }}
+          path: out
+
+      - name: Create the release tag
+        run: python3 scripts/ci/tag_release.py

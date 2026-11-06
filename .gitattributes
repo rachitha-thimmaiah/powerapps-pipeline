@@ -1,0 +1,14 @@
+* text=auto
+*.xml text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf
+*.msapp binary
+*.zip binary
+*.dll binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.pdf binary

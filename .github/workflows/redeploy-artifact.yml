@@ -1,0 +1,147 @@
+# Re-import a managed zip that a previous Build and promote run already packed.
+# This workflow does not pack a solution.
+
+name: Redeploy managed artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      solution_name:
+        description: Solution unique name
+        required: true
+        type: string
+      source_run_id:
+        description: Run ID of the Build and promote workflow that packed the zip
+        required: true
+        type: string
+      target_environment:
+        description: GitHub environment to import into
+        required: true
+        type: choice
+        options:
+          - test
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  redeploy:
+    name: Redeploy ${{ inputs.target_environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: ${{ inputs.target_environment }}
+    concurrency:
+      group: redeploy-${{ inputs.target_environment }}-${{ inputs.solution_name }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - name: Check the solution name
+        env:
+          SOLUTION_NAME: ${{ inputs.solution_name }}
+        run: |
+          set -euo pipefail
+          case "$SOLUTION_NAME" in
+            [A-Za-z]* ) ;;
+            *) echo "Solution name must start with a letter."; exit 1 ;;
+          esac
+          case "$SOLUTION_NAME" in
+            *[!A-Za-z0-9_]*) echo "Solution name contains unsupported characters."; exit 1 ;;
+          esac
+
+      - name: Check out deployment settings
+        uses: actions/checkout@v4
+
+      - name: Download the existing managed artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: managed-${{ inputs.solution_name }}
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: out
+
+      - name: Resolve deployment settings
+        id: settings
+        env:
+          SOLUTION_NAME: ${{ inputs.solution_name }}
+          TARGET: ${{ inputs.target_environment }}
+        run: |
+          set -euo pipefail
+          if [ "$TARGET" = "production" ]; then
+            candidate="config/${SOLUTION_NAME}/prod.settings.json"
+          else
+            candidate="config/${SOLUTION_NAME}/test.settings.json"
+          fi
+          if [ -f "$candidate" ]; then
+            echo "file=$candidate" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Power Platform CLI
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Verify federated identity
+        uses: microsoft/powerplatform-actions/who-am-i@v1
+        with:
+          environment-url: ${{ vars.PP_ENVIRONMENT_URL }}
+          app-id: ${{ vars.PP_APP_ID }}
+          tenant-id: ${{ vars.PP_TENANT_ID }}
+
+      - name: Authenticate PAC
+        shell: bash
+        env:
+          PP_ENVIRONMENT_URL: ${{ vars.PP_ENVIRONMENT_URL }}
+          PP_TENANT_ID: ${{ vars.PP_TENANT_ID }}
+          PP_APP_ID: ${{ vars.PP_APP_ID }}
+        run: |
+          set -euo pipefail
+          if pac auth select --name pipeline; then
+            exit 0
+          fi
+          pac auth create \
+            --name pipeline \
+            --environment "$PP_ENVIRONMENT_URL" \
+            --tenant "$PP_TENANT_ID" \
+            --applicationId "$PP_APP_ID" \
+            --githubFederated
+
+      - name: Choose first import or upgrade
+        id: mode
+        env:
+          SOLUTION_NAME: ${{ inputs.solution_name }}
+        run: python3 scripts/ci/import_mode.py
+
+      - name: Import the same managed solution and publish
+        uses: ./.github/actions/import-managed
+        with:
+          environment-url: ${{ vars.PP_ENVIRONMENT_URL }}
+          app-id: ${{ vars.PP_APP_ID }}
+          tenant-id: ${{ vars.PP_TENANT_ID }}
+          solution-file: out/${{ inputs.solution_name }}_managed.zip
+          stage-and-upgrade: ${{ steps.mode.outputs.stage_and_upgrade }}
+          deployment-settings-file: ${{ steps.settings.outputs.file }}
+
+      - name: Sign in again for the smoke test
+        shell: bash
+        env:
+          PP_ENVIRONMENT_URL: ${{ vars.PP_ENVIRONMENT_URL }}
+          PP_TENANT_ID: ${{ vars.PP_TENANT_ID }}
+          PP_APP_ID: ${{ vars.PP_APP_ID }}
+        run: |
+          set -euo pipefail
+          if pac auth select --name pipeline; then
+            exit 0
+          fi
+          pac auth create \
+            --name pipeline \
+            --environment "$PP_ENVIRONMENT_URL" \
+            --tenant "$PP_TENANT_ID" \
+            --applicationId "$PP_APP_ID" \
+            --githubFederated
+
+      - name: Smoke test
+        run: python3 scripts/ci/smoke_test.py

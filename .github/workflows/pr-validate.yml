@@ -1,0 +1,78 @@
+# Pull request gate. These checks read the unpacked files only.
+# Solution checker runs after merge, in the TEST job, because this repo uses one
+# app registration and that identity is not trusted for pull requests.
+
+name: PR validation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect changed solutions
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      has_solutions: ${{ steps.detect.outputs.has_solutions }}
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select solutions touched by this pull request
+        id: detect
+        env:
+          DIFF_MODE: pull_request
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci/detect_solutions.py
+
+  quality:
+    name: Quality validation
+    needs: detect
+    if: needs.detect.outputs.has_solutions == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJson(needs.detect.outputs.matrix || '{"include":[]}') }}
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+
+      - name: Validate unpacked solution
+        env:
+          SOLUTION_NAME: ${{ matrix.uniqueName }}
+        run: python3 scripts/ci/validate_solution.py
+
+  pr-status:
+    name: PR validation
+    needs: [detect, quality]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the required status check
+        env:
+          DETECT: ${{ needs.detect.result }}
+          HAS_SOLUTIONS: ${{ needs.detect.outputs.has_solutions }}
+          QUALITY: ${{ needs.quality.result }}
+        run: |
+          set -euo pipefail
+          echo "detect=$DETECT quality=$QUALITY solutions=$HAS_SOLUTIONS"
+          if [ "$DETECT" != "success" ]; then
+            echo "Solution detection failed."
+            exit 1
+          fi
+          if [ "$HAS_SOLUTIONS" != "true" ]; then
+            echo "This pull request does not change a solution."
+            exit 0
+          fi
+          if [ "$QUALITY" != "success" ]; then
+            echo "Quality validation failed."
+            exit 1
+          fi
