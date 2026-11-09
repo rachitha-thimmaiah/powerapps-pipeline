@@ -89,11 +89,11 @@ def names_from_paths(files: list[str]) -> set[str]:
         parts = path.split("/")
         if len(parts) < 2:
             continue
-        if parts[0] == "solutions":
+        if parts[0] == "solutions" and len(parts) >= 3:
             if path == f"solutions/{parts[1]}/README.md":
                 continue
             names.add(parts[1])
-        elif parts[0] == "config":
+        elif parts[0] == "config" and len(parts) >= 3:
             names.add(parts[1])
     return names
 

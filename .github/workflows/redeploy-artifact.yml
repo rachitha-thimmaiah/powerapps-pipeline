@@ -20,7 +20,7 @@ on:
         type: choice
         options:
           - test
-          - production
+          - prod
 
 permissions:
   contents: read
@@ -70,7 +70,7 @@ jobs:
           TARGET: ${{ inputs.target_environment }}
         run: |
           set -euo pipefail
-          if [ "$TARGET" = "production" ]; then
+          if [ "$TARGET" = "prod" ]; then
             candidate="config/${SOLUTION_NAME}/prod.settings.json"
           else
             candidate="config/${SOLUTION_NAME}/test.settings.json"

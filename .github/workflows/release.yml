@@ -230,7 +230,7 @@ jobs:
     if: needs.detect.outputs.has_solutions == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    environment: production
+    environment: prod
     concurrency:
       group: deploy-prod-${{ matrix.uniqueName }}
       cancel-in-progress: false
@@ -254,7 +254,7 @@ jobs:
           test -n "$PP_APP_ID"
           case "$PP_ENVIRONMENT_URL" in
             https://*) ;;
-            *) echo "PP_ENVIRONMENT_URL on the production environment must be the PROD Dataverse URL."; exit 1 ;;
+            *) echo "PP_ENVIRONMENT_URL on the prod environment must be the PROD Dataverse URL."; exit 1 ;;
           esac
           case "$PP_ENVIRONMENT_URL" in
             */) echo "Remove the trailing slash from PP_ENVIRONMENT_URL."; exit 1 ;;

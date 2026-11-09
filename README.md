@@ -30,7 +30,7 @@ Deploy TEST
   solution checker, then import that zip, publish, smoke test
         |
         v
-Review deployments  ->  Approve production
+Review deployments  ->  Approve prod
         |
         v
 Deploy PROD
@@ -62,7 +62,7 @@ Tag release/<Solution>/<version>
   -BranchName feature/ClaimsReview/initial
 ```
 
-4. Open a pull request. After it merges, approve the production deployment in the Actions run.
+4. Open a pull request. After it merges, approve the prod deployment in the Actions run.
 
 `catalog/solutions.json` is the list of applications. `enabled: false` keeps the sample placeholder out of the pipeline until it has been exported.
 
@@ -73,12 +73,12 @@ The pipeline does not run until the repository is on GitHub and Entra trusts it.
 1. [Create one app registration, two federated credentials, the application users, and the GitHub environments](docs/entra-federated-credentials.md).
 2. [Create `SamplePipelineApp` in L48 DEV and export it](docs/sample-solution.md).
 3. Require the `PR validation` status check on `main`.
-4. Add release managers as required reviewers on the GitHub environment named `production`.
+4. Add release managers as required reviewers on the GitHub environment named `prod`.
 
-GitHub environment names are part of the federated credential subject. Use `test` and `production`.
+GitHub environment names are part of the federated credential subject. Use `test` and `prod`.
 
 ## Authentication
 
-One app registration is used. Its federated credentials trust only `repo:<org>/<repo>:environment:test` and `repo:<org>/<repo>:environment:production`. Pull requests do not receive a token. Solution checker runs in the TEST job, before import, with that same app. Client secrets are not used.
+One app registration is used. Its federated credentials trust only `repo:<org>/<repo>:environment:test` and `repo:<org>/<repo>:environment:prod`. Pull requests do not receive a token. Solution checker runs in the TEST job, before import, with that same app. Client secrets are not used.
 
 Repository variables are `PP_TENANT_ID`, `PP_APP_ID`, and `PP_CHECKER_GEO`. The TEST and PROD URLs are environment variables named `PP_ENVIRONMENT_URL` on those GitHub environments.

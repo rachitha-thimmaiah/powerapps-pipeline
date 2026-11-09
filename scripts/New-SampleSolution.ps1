@@ -48,7 +48,7 @@ Write-Host ""
 Write-Host "8. Open a pull request from that feature branch into main."
 Write-Host "   The PR runs quality validation and solution checker."
 Write-Host "   Merge to main packs one managed zip, deploys it to TEST, then waits."
-Write-Host "   A reviewer approves the production deployment. PROD imports that same zip."
+Write-Host "   A reviewer approves the prod deployment. PROD imports that same zip."
 Write-Host "   The pipeline then creates tag release/$SolutionName/<version>."
 
 if (Get-Command pac -ErrorAction SilentlyContinue) {

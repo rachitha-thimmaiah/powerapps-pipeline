@@ -2,9 +2,9 @@
 
 GitHub Actions authenticates to Dataverse with OpenID Connect. The workflow asks GitHub for a short-lived token, and Entra accepts that token because a federated credential matches the token subject. No client secret is stored in GitHub.
 
-One app registration is enough. Add two federated credentials to it, one for the GitHub `test` environment and one for `production`. Do not add a pull-request credential and do not add a branch credential.
+One app registration is enough. Add two federated credentials to it, one for the GitHub `test` environment and one for `prod`. Do not add a pull-request credential and do not add a branch credential.
 
-A pull-request credential on this same app would be unsafe. The app is an application user in TEST and PROD, and an Entra token is not limited to one Dataverse environment. Anyone who can push a branch could change the pull-request workflow and call PROD. GitHub only mints the token when a job is allowed to use the `test` or `production` environment, and those environments are limited to `main`. Production also waits for a reviewer.
+A pull-request credential on this same app would be unsafe. The app is an application user in TEST and PROD, and an Entra token is not limited to one Dataverse environment. Anyone who can push a branch could change the pull-request workflow and call PROD. GitHub only mints the token when a job is allowed to use the `test` or `prod` environment, and those environments are limited to `main`. The prod job also waits for a reviewer.
 
 Leave the repository OIDC subject claim on its default. Do not switch it to the `repository, workflow` template. The subjects below depend on the GitHub environment name.
 
@@ -47,15 +47,15 @@ repo:ORG/REPO:environment:test
 Add a second credential on the same app.
 
 - Entity type: **Environment**
-- GitHub environment name: `production`
+- GitHub environment name: `prod`
 - Name: `github-environment-production`
 - Subject:
 
 ```text
-repo:ORG/REPO:environment:production
+repo:ORG/REPO:environment:prod
 ```
 
-The GitHub environment name and the subject must match. Use `production`, not `prod`.
+The GitHub environment name and the subject must match. This repository uses the immutable subject, so the stored value includes the owner and repository IDs and ends in `:environment:prod`.
 
 ## 3. Application users in Power Platform
 
@@ -79,6 +79,8 @@ If the app does not appear in **Add an app**, wait a few minutes after creating 
 
 Copy each environment URL from the environment details page. It looks like `https://contoso-test.crm.dynamics.com`. Do not include a trailing slash.
 
+The Power Platform display name can be anything. The pipeline selects the Dataverse environment by this URL, not by the name shown in the maker portal.
+
 ## 4. GitHub variables and environments
 
 In the repository, open **Settings** → **Secrets and variables** → **Actions** → **Variables**. Add repository variables:
@@ -98,13 +100,13 @@ Create two GitHub environments under **Settings** → **Environments**.
 - Environment variable `PP_ENVIRONMENT_URL` = TEST Dataverse URL
 - Deployment branches: **Selected branches** → `main`
 
-### Environment `production`
+### Environment `prod`
 
 - Environment variable `PP_ENVIRONMENT_URL` = PROD Dataverse URL
 - Deployment branches: **Selected branches** → `main`
 - **Required reviewers**: the release managers
 
-The required reviewer is the play button. After solution checker and the TEST import succeed, the PROD job stays on **Waiting**. The reviewer opens the workflow run, selects **Review deployments**, and approves `production`. That approval imports the same managed zip. It does not pack the solution again.
+The required reviewer is the play button. After solution checker and the TEST import succeed, the PROD job stays on **Waiting**. The reviewer opens the workflow run, selects **Review deployments**, and approves `prod`. That approval imports the same managed zip. It does not pack the solution again.
 
 Also set **Settings** → **Actions** → **General** → **Workflow permissions** to **Read and write permissions**. The tag job needs that permission to push `release/<SolutionUniqueName>/<version>`.
 
@@ -116,6 +118,6 @@ Also set **Settings** → **Actions** → **General** → **Workflow permissions
 If sign-in fails with a subject or issuer error, compare the federated credential subject with the job:
 
 - TEST: `repo:ORG/REPO:environment:test`
-- PROD: `repo:ORG/REPO:environment:production`
+- PROD: `repo:ORG/REPO:environment:prod`
 
 If sign-in succeeds and the import says the user is not authorized, the application user or its security role is missing in that environment.

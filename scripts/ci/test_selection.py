@@ -55,6 +55,16 @@ class SelectionTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_repository_readme_is_not_a_solution(self) -> None:
+        selected = detect_solutions.select_solutions(
+            self.root,
+            self.catalog,
+            ["solutions/README.md", "catalog/solutions.json", "README.md"],
+            "",
+            None,
+        )
+        self.assertEqual(selected, [])
+
     def test_readme_only_is_ignored(self) -> None:
         selected = detect_solutions.select_solutions(
             self.root,

@@ -79,7 +79,7 @@ Set branch protection on `main` to require a pull request and the status check n
 
 1. Packs `SamplePipelineApp_managed.zip` once and uploads artifact `managed-SamplePipelineApp`.
 2. Runs solution checker against TEST, then imports that zip, publishes customizations, activates flows, and checks that TEST shows the same version.
-3. Waits on the `production` environment.
+3. Waits on the `prod` environment.
 4. After **Review deployments** → **Approve**, imports that same zip into PROD. There is no second pack.
 5. Creates the annotated tag `release/SamplePipelineApp/1.0.0.0`.
 
@@ -107,9 +107,9 @@ PROD approval already imports the artifact from the build. To import that zip ag
 2. Run **Redeploy managed artifact**.
 3. Solution name: `SamplePipelineApp`.
 4. Source run ID: the run you copied.
-5. Target: `test` or `production`.
+5. Target: `test` or `prod`.
 
-Choosing `production` waits for the same approval button. The workflow downloads `managed-SamplePipelineApp` from that run and imports it.
+Choosing `prod` waits for the same approval button. The workflow downloads `managed-SamplePipelineApp` from that run and imports it.
 
 ## Version already in TEST
 
